@@ -1,4 +1,4 @@
-import { startObserver, stopObserver } from './captionObserver';
+import { startObserver, stopObserver, clearTranslationCache } from './captionObserver';
 import { hideOverlay, showStatus } from './overlay';
 import { getSettings } from '../shared/storage';
 import type { ExtensionMessage } from '../shared/messages';
@@ -28,8 +28,10 @@ async function handleMessage(message: ExtensionMessage): Promise<{ ok: boolean }
     }
     case 'SETTINGS_UPDATED': {
       const settings = await getSettings();
-      if (settings.isEnabled) {
-        stopObserver();
+      stopObserver();
+      // Clear cache so stale translations from the old language pair are discarded
+      clearTranslationCache();
+      if (settings.isEnabled && settings.apiKey) {
         startObserver(settings);
       }
       return { ok: true };

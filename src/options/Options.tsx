@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { getSettings, saveSettings } from '../shared/storage';
+import type { ExtensionMessage } from '../shared/messages';
 
 const MODELS = ['gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo'];
 
@@ -25,6 +26,17 @@ export default function Options() {
     await saveSettings({ apiKey, model, sourceLanguage, targetLanguage });
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
+
+    // Notify active Google Meet tab so settings take effect immediately
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id && tab.url?.includes('meet.google.com')) {
+        const msg: ExtensionMessage = { type: 'SETTINGS_UPDATED' };
+        await chrome.tabs.sendMessage(tab.id, msg).catch(() => {/* content script may not be loaded */});
+      }
+    } catch {
+      // Non-critical – settings are persisted regardless
+    }
   };
 
   if (loading) return <div style={styles.container}><p>Loading…</p></div>;
