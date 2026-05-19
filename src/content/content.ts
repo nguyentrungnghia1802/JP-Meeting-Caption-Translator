@@ -4,7 +4,7 @@ import { getSettings } from '../shared/storage';
 import type { ExtensionMessage } from '../shared/messages';
 
 // Listen for messages from popup
-chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse: (response: { ok: boolean }) => void) => {
   handleMessage(message).then(sendResponse).catch(() => sendResponse({ ok: false }));
   return true; // keep channel open for async response
 });
