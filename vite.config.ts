@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
-import { copyFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'fs';
+import { copyFileSync, mkdirSync, existsSync, readdirSync, statSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 function copyDir(src: string, dest: string) {
@@ -17,17 +17,36 @@ function copyDir(src: string, dest: string) {
   }
 }
 
-function copyPublicPlugin() {
+/**
+ * After Vite writes HTML files to dist/src/popup/popup.html etc.,
+ * move them to dist/popup.html and dist/options.html and fix asset paths.
+ */
+function fixHtmlPlugin() {
   return {
-    name: 'copy-public',
+    name: 'fix-html-paths',
     closeBundle() {
+      // Copy public/ assets into dist/
       copyDir('public', 'dist');
+
+      const moves: Array<[string, string]> = [
+        ['dist/src/popup/popup.html', 'dist/popup.html'],
+        ['dist/src/options/options.html', 'dist/options.html'],
+      ];
+
+      for (const [src, dest] of moves) {
+        if (existsSync(src)) {
+          // Fix relative asset paths: ../../assets/ → assets/
+          let content = readFileSync(src, 'utf-8');
+          content = content.replace(/\.\.\/\.\.\/assets\//g, 'assets/');
+          writeFileSync(dest, content, 'utf-8');
+        }
+      }
     },
   };
 }
 
 export default defineConfig({
-  plugins: [react(), copyPublicPlugin()],
+  plugins: [react(), fixHtmlPlugin()],
   build: {
     outDir: 'dist',
     emptyOutDir: true,
