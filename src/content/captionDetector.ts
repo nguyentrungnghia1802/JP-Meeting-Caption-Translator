@@ -105,13 +105,10 @@ function extractLatestCaption(el: Element): string {
     }
   });
 
-  if (textNodes.length > 0) {
-    // Return the last text node – it's the most recently added sentence
-    return textNodes[textNodes.length - 1];
-  }
-
-  // Fallback: full textContent
-  return el.textContent?.trim() ?? '';
+  // Return the last text node – it's the most recently added sentence.
+  // Do NOT fall back to el.textContent: it would concatenate participant names,
+  // icon strings ("arrow_downward"), and UI buttons from nested child elements.
+  return textNodes.length > 0 ? textNodes[textNodes.length - 1] : '';
 }
 
 /**
