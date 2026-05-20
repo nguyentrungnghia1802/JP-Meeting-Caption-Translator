@@ -3,9 +3,12 @@ import { showOverlay, showError } from './overlay';
 import { translateTextStream } from '../shared/translator';
 import type { ExtensionSettings } from '../shared/storage';
 
-// Shorter debounce: streaming lets us show partial results early,
-// so we can afford to start sooner than the old 800 ms.
-const DEBOUNCE_MS = 500;
+// Debounce: wait for mutations to settle before processing
+const DEBOUNCE_MS = 300;
+// MaxWait: force-fire even if mutations never stop (Google Meet updates DOM
+// constantly with clocks, network indicators, animations, etc. which would
+// otherwise keep resetting the debounce timer indefinitely).
+const MAX_WAIT_MS = 1500;
 
 // LRU cap – prevents unbounded memory growth in long meetings
 const MAX_CACHE_SIZE = 200;
@@ -18,6 +21,7 @@ let observer: MutationObserver | null = null;
 // Starts wide (document.body), narrows to caption container on first hit
 let captionRoot: Element = document.body;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let maxWaitTimer: ReturnType<typeof setTimeout> | null = null;
 let lastProcessedText = '';
 // AbortController for the current in-flight API request
 let inflightController: AbortController | null = null;
@@ -65,11 +69,30 @@ export function startObserver(settings: ExtensionSettings): void {
   captionRoot = document.body;
 
   observer = new MutationObserver(() => {
+    // Normal debounce: wait for mutations to settle
     if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => { void processCaption(settings); }, DEBOUNCE_MS);
+    debounceTimer = setTimeout(() => {
+      cancelMaxWait();
+      void processCaption(settings);
+    }, DEBOUNCE_MS);
+
+    // MaxWait guarantee: fire even if mutations never stop
+    if (!maxWaitTimer) {
+      maxWaitTimer = setTimeout(() => {
+        cancelDebounce();
+        void processCaption(settings);
+      }, MAX_WAIT_MS);
+    }
   });
 
   observer.observe(captionRoot, { childList: true, subtree: true, characterData: true });
+}
+
+function cancelDebounce(): void {
+  if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+}
+function cancelMaxWait(): void {
+  if (maxWaitTimer) { clearTimeout(maxWaitTimer); maxWaitTimer = null; }
 }
 
 export function stopObserver(): void {
@@ -82,10 +105,8 @@ export function stopObserver(): void {
     observer.disconnect();
     observer = null;
   }
-  if (debounceTimer) {
-    clearTimeout(debounceTimer);
-    debounceTimer = null;
-  }
+  cancelDebounce();
+  cancelMaxWait();
   lastProcessedText = '';
   captionRoot = document.body;
   // Note: translationCache is intentionally NOT cleared here –
