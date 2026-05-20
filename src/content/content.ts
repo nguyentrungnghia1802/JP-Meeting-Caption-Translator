@@ -13,7 +13,8 @@ async function handleMessage(message: ExtensionMessage): Promise<{ ok: boolean }
   switch (message.type) {
     case 'START_TRANSLATION': {
       const settings = await getSettings();
-      if (!settings.apiKey) {
+      const needsKey = settings.provider !== 'google';
+      if (needsKey && !settings.apiKey) {
         showStatus('⚠️ No API key. Please configure in Settings.');
         return { ok: false };
       }
@@ -31,7 +32,8 @@ async function handleMessage(message: ExtensionMessage): Promise<{ ok: boolean }
       stopObserver();
       // Clear cache so stale translations from the old language pair are discarded
       clearTranslationCache();
-      if (settings.isEnabled && settings.apiKey) {
+      const canStart = settings.isEnabled && (settings.provider === 'google' || !!settings.apiKey);
+      if (canStart) {
         startObserver(settings);
       }
       return { ok: true };
@@ -46,7 +48,8 @@ async function handleMessage(message: ExtensionMessage): Promise<{ ok: boolean }
 
 // Auto-start if previously enabled (e.g. page reload)
 getSettings().then((settings) => {
-  if (settings.isEnabled && settings.apiKey) {
+  const canStart = settings.isEnabled && (settings.provider === 'google' || !!settings.apiKey);
+  if (canStart) {
     showStatus('🔄 Waiting for Japanese captions…');
     startObserver(settings);
   }
