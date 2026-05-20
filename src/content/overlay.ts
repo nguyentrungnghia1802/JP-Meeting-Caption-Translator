@@ -1,111 +1,209 @@
 const OVERLAY_ID = 'jp-caption-translator-overlay';
 
-// Pre-allocated stable DOM references – avoids querying the DOM on every update
-interface OverlayNodes {
+interface OverlayWindow {
   container: HTMLElement;
-  originalLine: HTMLElement;
-  translationLine: HTMLElement;
+  body: HTMLElement;
+  statusBar: HTMLElement;
+  /** original text of the last appended entry (for streaming updates) */
+  lastOriginal: string;
+  /** translation div of the last entry (for streaming updates) */
+  lastTranslationEl: HTMLElement | null;
 }
 
-let nodes: OverlayNodes | null = null;
+let win: OverlayWindow | null = null;
 
-function ensureOverlay(): OverlayNodes {
-  // Re-use if still attached
-  if (nodes && document.body.contains(nodes.container)) return nodes;
+// ─── Build the draggable window ──────────────────────────────────────────────
 
-  // Remove any stale leftover
+function buildWindow(): OverlayWindow {
   document.getElementById(OVERLAY_ID)?.remove();
 
+  // ── Outer container ──────────────────────────────────────────────────────
   const container = document.createElement('div');
   container.id = OVERLAY_ID;
-  // Note: backdrop-filter: blur is intentionally omitted – it triggers GPU compositing
-  // on every repaint which causes jank in video-heavy pages like Google Meet.
   container.style.cssText = `
     position: fixed;
-    bottom: 80px;
-    left: 50%;
-    transform: translateX(-50%);
+    bottom: 90px;
+    right: 20px;
     z-index: 2147483647;
-    max-width: 720px;
-    width: 90%;
-    background: rgba(0, 0, 0, 0.82);
+    width: 420px;
+    max-width: calc(100vw - 40px);
+    background: rgba(15, 15, 20, 0.93);
+    border: 1px solid rgba(255,255,255,0.12);
     border-radius: 12px;
-    padding: 14px 20px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.7);
     font-family: 'Segoe UI', 'Noto Sans JP', 'Hiragino Sans', sans-serif;
-    pointer-events: none;
-    transition: opacity 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     opacity: 0;
-    display: none;
+    transition: opacity 0.2s ease;
+    user-select: none;
   `;
 
-  const originalLine = document.createElement('div');
-  originalLine.style.cssText = `
-    font-size: 13px;
-    color: rgba(255,255,255,0.6);
-    margin-bottom: 6px;
-    line-height: 1.5;
-    letter-spacing: 0.3px;
-    word-break: break-word;
+  // ── Header (drag handle) ─────────────────────────────────────────────────
+  const header = document.createElement('div');
+  header.style.cssText = `
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: rgba(255,255,255,0.07);
+    cursor: grab;
+    flex-shrink: 0;
+  `;
+  const title = document.createElement('span');
+  title.textContent = '🇯🇵 JP Translator';
+  title.style.cssText = `font-size: 12px; color: rgba(255,255,255,0.6); font-weight: 600; letter-spacing: 0.5px;`;
+
+  const clearBtn = document.createElement('button');
+  clearBtn.textContent = '🗑';
+  clearBtn.title = 'Clear history';
+  clearBtn.style.cssText = `
+    background: none; border: none; color: rgba(255,255,255,0.4);
+    cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 4px;
+    transition: color 0.15s;
+  `;
+  clearBtn.onmouseenter = () => { clearBtn.style.color = '#fff'; };
+  clearBtn.onmouseleave = () => { clearBtn.style.color = 'rgba(255,255,255,0.4)'; };
+  clearBtn.onclick = () => { if (win) { win.body.innerHTML = ''; win.lastOriginal = ''; win.lastTranslationEl = null; } };
+
+  header.appendChild(title);
+  header.appendChild(clearBtn);
+
+  // ── Scrollable body ──────────────────────────────────────────────────────
+  const body = document.createElement('div');
+  body.style.cssText = `
+    flex: 1;
+    overflow-y: auto;
+    max-height: 320px;
+    min-height: 80px;
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.2) transparent;
   `;
 
-  const translationLine = document.createElement('div');
-  translationLine.style.cssText = `
-    font-size: 18px;
-    color: #ffffff;
-    font-weight: 600;
-    line-height: 1.5;
-    letter-spacing: 0.2px;
-    word-break: break-word;
+  // ── Status bar ───────────────────────────────────────────────────────────
+  const statusBar = document.createElement('div');
+  statusBar.style.cssText = `
+    padding: 5px 14px 7px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.45);
+    border-top: 1px solid rgba(255,255,255,0.07);
+    min-height: 22px;
+    flex-shrink: 0;
   `;
 
-  container.appendChild(originalLine);
-  container.appendChild(translationLine);
+  container.appendChild(header);
+  container.appendChild(body);
+  container.appendChild(statusBar);
   document.body.appendChild(container);
 
-  nodes = { container, originalLine, translationLine };
-  return nodes;
+  // ── Drag logic ───────────────────────────────────────────────────────────
+  let dragOffX = 0, dragOffY = 0, dragging = false;
+
+  header.addEventListener('mousedown', (e) => {
+    dragging = true;
+    header.style.cursor = 'grabbing';
+    const rect = container.getBoundingClientRect();
+    dragOffX = e.clientX - rect.left;
+    dragOffY = e.clientY - rect.top;
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const x = Math.max(0, Math.min(e.clientX - dragOffX, window.innerWidth - container.offsetWidth));
+    const y = Math.max(0, Math.min(e.clientY - dragOffY, window.innerHeight - container.offsetHeight));
+    container.style.left = `${x}px`;
+    container.style.top = `${y}px`;
+    container.style.right = 'auto';
+    container.style.bottom = 'auto';
+  });
+
+  document.addEventListener('mouseup', () => {
+    dragging = false;
+    header.style.cursor = 'grab';
+  });
+
+  win = { container, body, statusBar, lastOriginal: '', lastTranslationEl: null };
+  return win;
 }
 
-function showContainer(): void {
-  const { container } = ensureOverlay();
-  container.style.display = 'block';
-  // Schedule opacity change after display:block is painted
-  requestAnimationFrame(() => { container.style.opacity = '1'; });
+function ensureWindow(): OverlayWindow {
+  if (win && document.body.contains(win.container)) return win;
+  return buildWindow();
 }
 
+function showWindow(): void {
+  const w = ensureWindow();
+  w.container.style.display = 'flex';
+  requestAnimationFrame(() => { w.container.style.opacity = '1'; });
+}
+
+// ─── Public API ──────────────────────────────────────────────────────────────
+
+/**
+ * Append a new translation entry, or update the last entry if the original
+ * text is the same (handles streaming token-by-token updates).
+ */
 export function showOverlay(original: string, translation: string): void {
-  const { originalLine, translationLine } = ensureOverlay();
-  // textContent avoids HTML parsing overhead and prevents XSS
-  originalLine.textContent = original;
-  translationLine.textContent = translation;
-  translationLine.style.color = '#ffffff';
-  translationLine.style.fontSize = '18px';
-  showContainer();
+  const w = ensureWindow();
+  showWindow();
+
+  if (original === w.lastOriginal && w.lastTranslationEl) {
+    // Streaming update: replace translation text in place
+    w.lastTranslationEl.textContent = translation;
+  } else {
+    // New sentence: append a new entry
+    const entry = document.createElement('div');
+    entry.style.cssText = `
+      border-left: 2px solid rgba(255,255,255,0.15);
+      padding-left: 10px;
+    `;
+
+    const origEl = document.createElement('div');
+    origEl.textContent = original;
+    origEl.style.cssText = `font-size: 12px; color: rgba(255,255,255,0.5); margin-bottom: 3px; word-break: break-word;`;
+
+    const transEl = document.createElement('div');
+    transEl.textContent = translation;
+    transEl.style.cssText = `font-size: 16px; color: #ffffff; font-weight: 600; line-height: 1.5; word-break: break-word;`;
+
+    entry.appendChild(origEl);
+    entry.appendChild(transEl);
+    w.body.appendChild(entry);
+
+    w.lastOriginal = original;
+    w.lastTranslationEl = transEl;
+
+    // Auto-scroll to the newest entry
+    w.body.scrollTop = w.body.scrollHeight;
+  }
+
+  w.statusBar.textContent = '';
 }
 
 export function showError(message: string): void {
-  const { originalLine, translationLine } = ensureOverlay();
-  originalLine.textContent = '';
-  translationLine.textContent = `⚠️ ${message}`;
-  translationLine.style.color = '#fca5a5';
-  translationLine.style.fontSize = '13px';
-  showContainer();
+  const w = ensureWindow();
+  showWindow();
+  w.statusBar.textContent = `⚠️ ${message}`;
+  w.statusBar.style.color = '#fca5a5';
 }
 
 export function showStatus(message: string): void {
-  const { originalLine, translationLine } = ensureOverlay();
-  originalLine.textContent = '';
-  translationLine.textContent = message;
-  translationLine.style.color = 'rgba(255,255,255,0.7)';
-  translationLine.style.fontSize = '13px';
-  showContainer();
+  const w = ensureWindow();
+  showWindow();
+  w.statusBar.textContent = message;
+  w.statusBar.style.color = 'rgba(255,255,255,0.45)';
 }
 
 export function hideOverlay(): void {
-  if (!nodes) return;
-  nodes.container.style.opacity = '0';
+  if (!win) return;
+  win.container.style.opacity = '0';
   setTimeout(() => {
-    if (nodes) nodes.container.style.display = 'none';
+    if (win) win.container.style.display = 'none';
   }, 200);
 }
