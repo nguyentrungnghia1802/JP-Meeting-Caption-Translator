@@ -1,6 +1,6 @@
 import { detectCaptionText } from './captionDetector';
 import { showOverlay, showError, showStatus } from './overlay';
-import { translateTextStream } from '../shared/translator';
+import { translateTextStream, translateWithGoogle } from '../shared/translator';
 import type { ExtensionSettings } from '../shared/storage';
 
 // Poll interval: check for new captions every 3 seconds.
@@ -91,21 +91,37 @@ async function processCaption(settings: ExtensionSettings): Promise<void> {
   showStatus('⏳ Translating…');
 
   try {
-    const translation = await translateTextStream(
-      {
-        text,
-        apiKey: settings.apiKey,
-        model: settings.model,
-        sourceLanguage: settings.sourceLanguage,
-        targetLanguage: settings.targetLanguage,
-      },
-      (partial) => showOverlay(text, partial),
-      signal,
-    );
+    let translation: string;
 
-    if (translation) {
-      setCached(text, translation);
-      showOverlay(text, translation);
+    if (settings.provider === 'google') {
+      // Free, no API key needed, fast
+      translation = await translateWithGoogle(
+        text,
+        settings.sourceLanguage,
+        settings.targetLanguage,
+        signal,
+      );
+      if (translation) {
+        setCached(text, translation);
+        showOverlay(text, translation);
+      }
+    } else {
+      // OpenAI streaming
+      translation = await translateTextStream(
+        {
+          text,
+          apiKey: settings.apiKey,
+          model: settings.model,
+          sourceLanguage: settings.sourceLanguage,
+          targetLanguage: settings.targetLanguage,
+        },
+        (partial) => showOverlay(text, partial),
+        signal,
+      );
+      if (translation) {
+        setCached(text, translation);
+        showOverlay(text, translation);
+      }
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') return;

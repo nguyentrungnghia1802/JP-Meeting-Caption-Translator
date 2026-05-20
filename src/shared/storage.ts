@@ -5,6 +5,7 @@ export interface ExtensionSettings {
   sourceLanguage: string;
   targetLanguage: string;
   isEnabled: boolean;
+  provider: 'google' | 'openai';
 }
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
@@ -13,6 +14,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   sourceLanguage: 'Japanese',
   targetLanguage: 'Vietnamese',
   isEnabled: false,
+  provider: 'google',
 };
 
 export async function getSettings(): Promise<ExtensionSettings> {

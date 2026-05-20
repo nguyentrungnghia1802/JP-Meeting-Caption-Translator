@@ -5,6 +5,7 @@ import type { ExtensionMessage } from '../shared/messages';
 const MODELS = ['gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo'];
 
 export default function Options() {
+  const [provider, setProvider] = useState<'google' | 'openai'>('google');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('gpt-4o-mini');
   const [sourceLanguage, setSourceLanguage] = useState('Japanese');
@@ -14,6 +15,7 @@ export default function Options() {
 
   useEffect(() => {
     getSettings().then((s) => {
+      setProvider(s.provider ?? 'google');
       setApiKey(s.apiKey);
       setModel(s.model);
       setSourceLanguage(s.sourceLanguage);
@@ -23,7 +25,7 @@ export default function Options() {
   }, []);
 
   const handleSave = async () => {
-    await saveSettings({ apiKey, model, sourceLanguage, targetLanguage });
+    await saveSettings({ provider, apiKey, model, sourceLanguage, targetLanguage });
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
 
@@ -46,28 +48,40 @@ export default function Options() {
       <h1 style={styles.title}>⚙️ JP Caption Translator Settings</h1>
 
       <div style={styles.field}>
-        <label style={styles.label}>OpenAI API Key</label>
-        <input
-          type="password"
-          style={styles.input}
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder="sk-..."
-          autoComplete="off"
-        />
-        <p style={styles.hint}>
-          Your API key is stored only in your browser (chrome.storage.local) and is never sent anywhere except directly to OpenAI.
-        </p>
-      </div>
-
-      <div style={styles.field}>
-        <label style={styles.label}>Model</label>
-        <select style={styles.select} value={model} onChange={(e) => setModel(e.target.value)}>
-          {MODELS.map((m) => (
-            <option key={m} value={m}>{m}</option>
-          ))}
+        <label style={styles.label}>Translation Provider</label>
+        <select style={styles.select} value={provider} onChange={(e) => setProvider(e.target.value as 'google' | 'openai')}>
+          <option value="google">Google Translate (Free, no API key)</option>
+          <option value="openai">OpenAI (requires API key)</option>
         </select>
       </div>
+
+      {provider === 'openai' && (
+        <>
+          <div style={styles.field}>
+            <label style={styles.label}>OpenAI API Key</label>
+            <input
+              type="password"
+              style={styles.input}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="sk-..."
+              autoComplete="off"
+            />
+            <p style={styles.hint}>
+              Your API key is stored only in your browser (chrome.storage.local) and is never sent anywhere except directly to OpenAI.
+            </p>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Model</label>
+            <select style={styles.select} value={model} onChange={(e) => setModel(e.target.value)}>
+              {MODELS.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+        </>
+      )}
 
       <div style={styles.field}>
         <label style={styles.label}>Source Language</label>

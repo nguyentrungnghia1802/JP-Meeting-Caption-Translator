@@ -1,4 +1,15 @@
 const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
+const GOOGLE_ENDPOINT = 'https://translate.googleapis.com/translate_a/single';
+
+// Maps display language names → BCP-47 codes used by Google Translate
+const LANG_CODES: Record<string, string> = {
+  Japanese: 'ja',
+  Vietnamese: 'vi',
+  English: 'en',
+  Chinese: 'zh-CN',
+  'Chinese (Simplified)': 'zh-CN',
+  Korean: 'ko',
+};
 
 export interface TranslateParams {
   text: string;
@@ -7,6 +18,30 @@ export interface TranslateParams {
   sourceLanguage: string;
   targetLanguage: string;
 }
+
+/**
+ * Translates text using the free, unofficial Google Translate endpoint.
+ * No API key required. Returns the translated string.
+ */
+export async function translateWithGoogle(
+  text: string,
+  sourceLanguage: string,
+  targetLanguage: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const sl = LANG_CODES[sourceLanguage] ?? 'ja';
+  const tl = LANG_CODES[targetLanguage] ?? 'vi';
+  const url = `${GOOGLE_ENDPOINT}?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`;
+
+  const res = await fetch(url, { signal });
+  if (!res.ok) throw new Error(`Google Translate error: HTTP ${res.status}`);
+
+  // Response: [[["translated","original",null,null,1],...],null,"ja"]
+  const data = await res.json() as Array<unknown>;
+  const segments = data[0] as Array<[string, ...unknown[]]>;
+  return segments.map((s) => s[0]).join('').trim();
+}
+
 
 // Pre-build the system prompt once per call to avoid repeated string interpolation
 function buildSystemPrompt(src: string, tgt: string): string {
