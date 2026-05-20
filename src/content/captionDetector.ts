@@ -1,4 +1,4 @@
-import { isValidCaption } from '../shared/japanese';
+import { getValidator } from '../shared/japanese';
 
 // Caption container selectors – ordered from most-specific to least-specific.
 // Derived from live DevTools inspection of Google Meet (2025) caption DOM:
@@ -28,15 +28,15 @@ const MAX_WALK_NODES = 5000;
 
 /**
  * Fast path: try known selectors first.
- * Returns the first selector-based text set that contains valid Japanese, or null.
+ * Returns the first selector-based text set that contains valid captions, or [].
  */
-function detectViaSelectors(): string[] {
+function detectViaSelectors(validate: (t: string) => boolean): string[] {
   for (const selector of CONTAINER_SELECTORS) {
     try {
       const found: string[] = [];
       document.querySelectorAll(selector).forEach((el) => {
         const text = extractLatestCaption(el);
-        if (isValidCaption(text)) found.push(text);
+        if (validate(text)) found.push(text);
       });
       if (found.length > 0) {
         console.debug('[JP-Translator] caption via selector:', selector);
@@ -52,7 +52,7 @@ function detectViaSelectors(): string[] {
 /**
  * Slow-path fallback: walk text nodes up to MAX_WALK_NODES.
  */
-function detectViaWalk(root: Element): string[] {
+function detectViaWalk(root: Element, validate: (t: string) => boolean): string[] {
   const results: string[] = [];
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let node = walker.nextNode();
@@ -60,7 +60,7 @@ function detectViaWalk(root: Element): string[] {
   while (node && count < MAX_WALK_NODES) {
     count++;
     const text = node.textContent?.trim() ?? '';
-    if (isValidCaption(text)) results.push(text);
+    if (validate(text)) results.push(text);
     node = walker.nextNode();
   }
   if (results.length > 0) {
@@ -70,10 +70,10 @@ function detectViaWalk(root: Element): string[] {
 }
 
 /**
- * Nuclear fallback: scan every element in the document looking for Japanese text.
+ * Nuclear fallback: scan every element in the document looking for caption text.
  * Skips containers whose textContent is excessively long (entire page body).
  */
-function detectViaFullScan(): string[] {
+function detectViaFullScan(validate: (t: string) => boolean): string[] {
   const results: string[] = [];
   const all = document.querySelectorAll('*');
   for (let i = 0; i < all.length; i++) {
@@ -82,7 +82,7 @@ function detectViaFullScan(): string[] {
     if (el.children.length > 20) continue; // too many children → structural container
     const text = el.textContent?.trim() ?? '';
     if (text.length > 500) continue;        // too long → structural container
-    if (isValidCaption(text)) results.push(text);
+    if (validate(text)) results.push(text);
   }
   if (results.length > 0) {
     console.debug('[JP-Translator] caption via full-scan');
@@ -112,17 +112,18 @@ function extractLatestCaption(el: Element): string {
 }
 
 /**
- * Returns ALL unique Japanese caption sentences visible in the DOM,
- * in document (chronological) order. Callers decide which ones are new.
+ * Returns ALL unique caption sentences visible in the DOM in document order.
+ * Uses the appropriate validator for the given source language.
  */
-export function detectAllCaptions(): string[] {
+export function detectAllCaptions(sourceLanguage: string): string[] {
+  const validate = getValidator(sourceLanguage);
   let candidates: string[];
 
-  candidates = detectViaSelectors();
-  if (candidates.length === 0) candidates = detectViaWalk(document.body);
-  if (candidates.length === 0) candidates = detectViaFullScan();
+  candidates = detectViaSelectors(validate);
+  if (candidates.length === 0) candidates = detectViaWalk(document.body, validate);
+  if (candidates.length === 0) candidates = detectViaFullScan(validate);
   if (candidates.length === 0) {
-    console.debug('[JP-Translator] no Japanese caption found in DOM');
+    console.debug('[JP-Translator] no caption found in DOM for language:', sourceLanguage);
     return [];
   }
 

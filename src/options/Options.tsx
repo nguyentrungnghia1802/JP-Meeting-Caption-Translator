@@ -86,18 +86,22 @@ export default function Options() {
       <div style={styles.field}>
         <label style={styles.label}>Source Language</label>
         <select style={styles.select} value={sourceLanguage} onChange={(e) => setSourceLanguage(e.target.value)}>
-          <option value="Japanese">Japanese</option>
-          <option value="Chinese">Chinese</option>
-          <option value="Korean">Korean</option>
+          <option value="Japanese">Japanese 🇯🇵</option>
+          <option value="English">English 🇬🇧</option>
+          <option value="Vietnamese">Vietnamese 🇻🇳</option>
+          <option value="Chinese">Chinese 🇨🇳</option>
+          <option value="Korean">Korean 🇰🇷</option>
         </select>
       </div>
 
       <div style={styles.field}>
         <label style={styles.label}>Target Language</label>
         <select style={styles.select} value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)}>
-          <option value="Vietnamese">Vietnamese</option>
-          <option value="English">English</option>
-          <option value="Chinese (Simplified)">Chinese (Simplified)</option>
+          <option value="Vietnamese">Vietnamese 🇻🇳</option>
+          <option value="English">English 🇬🇧</option>
+          <option value="Japanese">Japanese 🇯🇵</option>
+          <option value="Chinese (Simplified)">Chinese (Simplified) 🇨🇳</option>
+          <option value="Korean">Korean 🇰🇷</option>
         </select>
       </div>
 

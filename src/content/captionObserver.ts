@@ -67,7 +67,7 @@ export function stopObserver(): void {
 // ─── Caption processing ──────────────────────────────────────────────────────
 
 async function processCaption(settings: ExtensionSettings): Promise<void> {
-  const allTexts = detectAllCaptions();
+  const allTexts = detectAllCaptions(settings.sourceLanguage);
   if (allTexts.length === 0) {
     console.debug('[JP-Translator] no caption detected');
     return;
