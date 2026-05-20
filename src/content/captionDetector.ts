@@ -112,26 +112,20 @@ function extractLatestCaption(el: Element): string {
 }
 
 /**
- * Detects the current Japanese caption text from the full document.
- * Tries selectors first (fast), then text-walk, then full DOM scan.
+ * Returns ALL unique Japanese caption sentences visible in the DOM,
+ * in document (chronological) order. Callers decide which ones are new.
  */
-export function detectCaptionText(): string | null {
+export function detectAllCaptions(): string[] {
   let candidates: string[];
 
-  // Wide-scope mode: selector → text-walk → full-scan (most thorough)
   candidates = detectViaSelectors();
+  if (candidates.length === 0) candidates = detectViaWalk(document.body);
+  if (candidates.length === 0) candidates = detectViaFullScan();
   if (candidates.length === 0) {
-    candidates = detectViaWalk(document.body);
-    }
-    if (candidates.length === 0) {
-      candidates = detectViaFullScan();
-    }
-    if (candidates.length === 0) {
-      console.debug('[JP-Translator] no Japanese caption found in DOM');
-    }
+    console.debug('[JP-Translator] no Japanese caption found in DOM');
+    return [];
+  }
 
-  if (candidates.length === 0) return null;
-  // Prefer longest text – most likely the full sentence
-  candidates.sort((a, b) => b.length - a.length);
-  return candidates[0];
+  // Deduplicate while preserving DOM (chronological) order
+  return [...new Set(candidates)];
 }

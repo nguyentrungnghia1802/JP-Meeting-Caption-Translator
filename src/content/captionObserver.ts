@@ -1,13 +1,11 @@
-import { detectCaptionText } from './captionDetector';
+import { detectAllCaptions } from './captionDetector';
 import { showOverlay, showError, showStatus } from './overlay';
 import { translateTextStream, translateWithGoogle } from '../shared/translator';
 import type { ExtensionSettings } from '../shared/storage';
 
-// Poll interval: check for new captions every 3 seconds.
-// Simpler and more reliable than MutationObserver + debounce on Google Meet,
-// which fires hundreds of unrelated DOM mutations and starves the timer.
-// 3s reduces OpenAI API call frequency to avoid rate-limit (429) errors.
-const POLL_MS = 3000;
+// Poll interval: check every 1.5 s. Google Translate is fast (~150 ms) so
+// rate-limit is not a concern. 1.5 s lets us keep up with ~40 sentences/min.
+const POLL_MS = 1500;
 
 // LRU cap – prevents unbounded memory growth in long meetings
 const MAX_CACHE_SIZE = 200;
@@ -15,6 +13,8 @@ const MAX_CACHE_SIZE = 200;
 // Translation cache persists across Stop/Start to avoid re-translating
 // the same sentences when the user briefly toggles the extension.
 const translationCache = new Map<string, string>();
+// Tracks sentences already appended to the overlay (avoids duplicate entries)
+const displayedTexts = new Set<string>();
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastProcessedText = '';
@@ -32,6 +32,7 @@ function setCached(key: string, value: string): void {
 
 export function clearTranslationCache(): void {
   translationCache.clear();
+  displayedTexts.clear();
   lastProcessedText = '';
 }
 
@@ -60,28 +61,37 @@ export function stopObserver(): void {
     pollTimer = null;
   }
   lastProcessedText = '';
+  displayedTexts.clear();
 }
 
 // ─── Caption processing ──────────────────────────────────────────────────────
 
 async function processCaption(settings: ExtensionSettings): Promise<void> {
-  const text = detectCaptionText();
-  if (!text) {
+  const allTexts = detectAllCaptions();
+  if (allTexts.length === 0) {
     console.debug('[JP-Translator] no caption detected');
     return;
   }
 
-  console.debug('[JP-Translator] detected:', text);
-
-  if (text === lastProcessedText) return;
-  lastProcessedText = text;
-
-  // Cache hit → instant display, no API call
-  const cached = translationCache.get(text);
-  if (cached !== undefined) {
-    showOverlay(text, cached);
-    return;
+  // Show any cached sentences not yet displayed (catches up after page reload)
+  for (const t of allTexts) {
+    if (!displayedTexts.has(t)) {
+      const hit = translationCache.get(t);
+      if (hit !== undefined) {
+        displayedTexts.add(t);
+        showOverlay(t, hit);
+      }
+    }
   }
+
+  // Find oldest sentence not yet translated and not currently in-flight
+  const unseen = allTexts.filter(t => !translationCache.has(t) && t !== lastProcessedText);
+  if (unseen.length === 0) return;
+
+  // Process one at a time (oldest first = chronological order)
+  const text = unseen[0];
+  console.debug('[JP-Translator] translating:', text);
+  lastProcessedText = text;
 
   // Cancel previous in-flight request
   if (inflightController) inflightController.abort();
@@ -103,6 +113,7 @@ async function processCaption(settings: ExtensionSettings): Promise<void> {
       );
       if (translation) {
         setCached(text, translation);
+        displayedTexts.add(text);
         showOverlay(text, translation);
       }
     } else {
@@ -120,6 +131,7 @@ async function processCaption(settings: ExtensionSettings): Promise<void> {
       );
       if (translation) {
         setCached(text, translation);
+        displayedTexts.add(text);
         showOverlay(text, translation);
       }
     }
