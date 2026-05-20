@@ -1,14 +1,12 @@
-import { detectCaptionText, findContainerForText } from './captionDetector';
-import { showOverlay, showError } from './overlay';
+import { detectCaptionText } from './captionDetector';
+import { showOverlay, showError, showStatus } from './overlay';
 import { translateTextStream } from '../shared/translator';
 import type { ExtensionSettings } from '../shared/storage';
 
-// Debounce: wait for mutations to settle before processing
-const DEBOUNCE_MS = 300;
-// MaxWait: force-fire even if mutations never stop (Google Meet updates DOM
-// constantly with clocks, network indicators, animations, etc. which would
-// otherwise keep resetting the debounce timer indefinitely).
-const MAX_WAIT_MS = 1500;
+// Poll interval: check for new captions every second.
+// Simpler and more reliable than MutationObserver + debounce on Google Meet,
+// which fires hundreds of unrelated DOM mutations and starves the timer.
+const POLL_MS = 1000;
 
 // LRU cap – prevents unbounded memory growth in long meetings
 const MAX_CACHE_SIZE = 200;
@@ -17,112 +15,64 @@ const MAX_CACHE_SIZE = 200;
 // the same sentences when the user briefly toggles the extension.
 const translationCache = new Map<string, string>();
 
-let observer: MutationObserver | null = null;
-// Starts wide (document.body), narrows to caption container on first hit
-let captionRoot: Element = document.body;
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-let maxWaitTimer: ReturnType<typeof setTimeout> | null = null;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastProcessedText = '';
-// AbortController for the current in-flight API request
 let inflightController: AbortController | null = null;
 
 // ─── LRU helpers ────────────────────────────────────────────────────────────
 
 function setCached(key: string, value: string): void {
   if (translationCache.size >= MAX_CACHE_SIZE) {
-    // Map preserves insertion order – delete the oldest entry
     const oldest = translationCache.keys().next().value;
     if (oldest !== undefined) translationCache.delete(oldest);
   }
   translationCache.set(key, value);
 }
 
-/** Call this when source/target language settings change. */
 export function clearTranslationCache(): void {
   translationCache.clear();
   lastProcessedText = '';
 }
 
-// ─── Observer scope narrowing ────────────────────────────────────────────────
-
-/**
- * After the first caption is detected, tries to narrow the MutationObserver
- * to the specific caption container element. This dramatically reduces the
- * number of mutation callbacks fired by Google Meet's React reconciler.
- */
-function tryNarrowScope(text: string): void {
-  if (captionRoot !== document.body || !observer) return;
-
-  const container = findContainerForText(text);
-  if (!container || container === document.body) return;
-
-  captionRoot = container;
-  observer.disconnect();
-  observer.observe(captionRoot, { childList: true, subtree: true, characterData: true });
-}
-
-// ─── Public API ──────────────────────────────────────────────────────────────
+// ─── Public API ─────────────────────────────────────────────────────────────
 
 export function startObserver(settings: ExtensionSettings): void {
-  if (observer) return; // already running
+  if (pollTimer !== null) return; // already running
 
-  captionRoot = document.body;
+  lastProcessedText = '';
 
-  observer = new MutationObserver(() => {
-    // Normal debounce: wait for mutations to settle
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      cancelMaxWait();
-      void processCaption(settings);
-    }, DEBOUNCE_MS);
+  pollTimer = setInterval(() => {
+    void processCaption(settings);
+  }, POLL_MS);
 
-    // MaxWait guarantee: fire even if mutations never stop
-    if (!maxWaitTimer) {
-      maxWaitTimer = setTimeout(() => {
-        cancelDebounce();
-        void processCaption(settings);
-      }, MAX_WAIT_MS);
-    }
-  });
-
-  observer.observe(captionRoot, { childList: true, subtree: true, characterData: true });
-}
-
-function cancelDebounce(): void {
-  if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
-}
-function cancelMaxWait(): void {
-  if (maxWaitTimer) { clearTimeout(maxWaitTimer); maxWaitTimer = null; }
+  // Also run immediately on start (don't wait for first interval)
+  void processCaption(settings);
 }
 
 export function stopObserver(): void {
-  // Cancel any in-flight API request immediately
   if (inflightController) {
     inflightController.abort();
     inflightController = null;
   }
-  if (observer) {
-    observer.disconnect();
-    observer = null;
+  if (pollTimer !== null) {
+    clearInterval(pollTimer);
+    pollTimer = null;
   }
-  cancelDebounce();
-  cancelMaxWait();
   lastProcessedText = '';
-  captionRoot = document.body;
-  // Note: translationCache is intentionally NOT cleared here –
-  // preserved for instant display when the user re-enables translation.
 }
 
 // ─── Caption processing ──────────────────────────────────────────────────────
 
 async function processCaption(settings: ExtensionSettings): Promise<void> {
-  const text = detectCaptionText(captionRoot);
-  if (!text) return;
+  const text = detectCaptionText();
+  if (!text) {
+    console.debug('[JP-Translator] no caption detected');
+    return;
+  }
+
+  console.debug('[JP-Translator] detected:', text);
+
   if (text === lastProcessedText) return;
-
-  // Narrow observer scope on first successful caption detection
-  if (captionRoot === document.body) tryNarrowScope(text);
-
   lastProcessedText = text;
 
   // Cache hit → instant display, no API call
@@ -132,14 +82,14 @@ async function processCaption(settings: ExtensionSettings): Promise<void> {
     return;
   }
 
-  // Cancel previous request – we have newer text
+  // Cancel previous in-flight request
   if (inflightController) inflightController.abort();
   inflightController = new AbortController();
   const { signal } = inflightController;
 
+  showStatus('⏳ Translating…');
+
   try {
-    // translateTextStream calls onChunk as each token arrives,
-    // so the overlay updates progressively with partial translations.
     const translation = await translateTextStream(
       {
         text,
@@ -154,17 +104,17 @@ async function processCaption(settings: ExtensionSettings): Promise<void> {
 
     if (translation) {
       setCached(text, translation);
-      // Show the final, clean translation (without trailing partial state)
       showOverlay(text, translation);
     }
   } catch (err) {
-    // AbortError is expected when a newer caption preempts this request
     if (err instanceof Error && err.name === 'AbortError') return;
     const message = err instanceof Error
       ? err.message
       : 'Translation error. Please check API key/settings.';
+    console.error('[JP-Translator] translation error:', message);
     showError(message);
   } finally {
     inflightController = null;
   }
 }
+
