@@ -3,10 +3,11 @@ import { showOverlay, showError, showStatus } from './overlay';
 import { translateTextStream } from '../shared/translator';
 import type { ExtensionSettings } from '../shared/storage';
 
-// Poll interval: check for new captions every second.
+// Poll interval: check for new captions every 3 seconds.
 // Simpler and more reliable than MutationObserver + debounce on Google Meet,
 // which fires hundreds of unrelated DOM mutations and starves the timer.
-const POLL_MS = 1000;
+// 3s reduces OpenAI API call frequency to avoid rate-limit (429) errors.
+const POLL_MS = 3000;
 
 // LRU cap – prevents unbounded memory growth in long meetings
 const MAX_CACHE_SIZE = 200;
