@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "description": "Chrome Extension to translate Japanese Google Meet captions to Vietnamese in real-time",
   "scripts": {
-    "build": "vite build",
-    "dev": "vite build --watch",
+    "build": "vite build && vite build --config vite.content.config.ts",
+    "dev": "vite build --watch & vite build --config vite.content.config.ts --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx"
   },

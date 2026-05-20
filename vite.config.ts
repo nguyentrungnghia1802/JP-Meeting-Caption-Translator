@@ -54,12 +54,12 @@ export default defineConfig({
       input: {
         popup: resolve(__dirname, 'src/popup/popup.html'),
         options: resolve(__dirname, 'src/options/options.html'),
-        content: resolve(__dirname, 'src/content/content.ts'),
+        // content script is built separately via vite.content.config.ts (IIFE format)
+        // because Chrome does not support ES module imports in content scripts.
         serviceWorker: resolve(__dirname, 'src/background/serviceWorker.ts'),
       },
       output: {
         entryFileNames: (chunk) => {
-          if (chunk.name === 'content') return 'content.js';
           if (chunk.name === 'serviceWorker') return 'serviceWorker.js';
           return 'assets/[name]-[hash].js';
         },
