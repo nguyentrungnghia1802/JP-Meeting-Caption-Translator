@@ -123,7 +123,49 @@ function buildMessages(
 function handleHttpError(status: number, apiMessage: string): never {
   if (status === 429) throw new Error('Rate limit exceeded. Please wait and try again.');
   if (status === 401) throw new Error('Invalid API key. Please check your Settings.');
-  throw new Error(`OpenAI API error: ${apiMessage || `HTTP ${status}`}`);
+  throw new Error('OpenAI API error: ' + (apiMessage || 'HTTP ' + String(status)));
+}
+
+/**
+ * Parse a single SSE data line and return the text delta, or null.
+ * Returns null for non-data lines, [DONE] sentinel, and malformed JSON.
+ */
+function parseSSEDelta(line: string): string | null {
+  if (!line.startsWith('data: ')) return null;
+  const data = line.slice(6).trim();
+  if (data === '[DONE]') return null;
+  try {
+    const parsed = JSON.parse(data) as {
+      choices: Array<{ delta: { content?: string }; finish_reason: string | null }>;
+    };
+    return parsed.choices[0]?.delta?.content ?? null;
+  } catch {
+    return null; // Malformed SSE chunk
+  }
+}
+
+/**
+ * Yields each complete newline-delimited SSE line from a ReadableStream.
+ * Handles chunks that split across line boundaries.
+ */
+async function* readSSELines(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<string> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let lineBuffer = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      lineBuffer += decoder.decode(value, { stream: true });
+      const lines = lineBuffer.split('\n');
+      lineBuffer = lines.pop() ?? '';
+      for (const line of lines) yield line;
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 /**
@@ -165,44 +207,13 @@ export async function translateTextStream(
 
   if (!response.body) throw new Error('No response body from OpenAI.');
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
   let partial = '';
-  // Buffer for SSE lines that may be split across chunks
-  let lineBuffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      lineBuffer += decoder.decode(value, { stream: true });
-
-      // Split on newlines; the last element may be an incomplete line
-      const lines = lineBuffer.split('\n');
-      lineBuffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6).trim();
-        if (data === '[DONE]') continue;
-
-        try {
-          const parsed = JSON.parse(data) as {
-            choices: Array<{ delta: { content?: string }; finish_reason: string | null }>;
-          };
-          const delta = parsed.choices[0]?.delta?.content ?? '';
-          if (delta) {
-            partial += delta;
-            onChunk(partial);
-          }
-        } catch {
-          // Malformed SSE chunk – skip silently
-        }
-      }
+  for await (const line of readSSELines(response.body)) {
+    const delta = parseSSEDelta(line);
+    if (delta) {
+      partial += delta;
+      onChunk(partial);
     }
-  } finally {
-    reader.releaseLock();
   }
 
   return partial.trim();

@@ -3,6 +3,7 @@ import { showOverlay, showError, showStatus } from './overlay';
 import { translateTextStream, translateWithGoogle } from '../shared/translator';
 import type { TranslationContext } from '../shared/translator';
 import type { ExtensionSettings } from '../shared/storage';
+import { isLikelyComplete, normalizeJapanese } from '../shared/japanese';
 
 // Safety-net poll interval.  MutationObserver handles real-time triggers;
 // this catches any edge cases where the observer misses a change.
@@ -37,6 +38,11 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 // Single abort-controller for the OpenAI stream (one at a time)
 let openAiController: AbortController | null = null;
 
+// Rolling context of the last MAX_CONTEXT source→target pairs.
+// Passed to OpenAI for conversational coherence; also used by Google.
+const MAX_CONTEXT = 3;
+const recentContext: TranslationContext[] = [];
+
 // ─── LRU helpers ────────────────────────────────────────────────────────────
 
 function setCached(key: string, value: string): void {
@@ -51,6 +57,7 @@ export function clearTranslationCache(): void {
   translationCache.clear();
   displayedTexts.clear();
   inFlightTexts.clear();
+  recentContext.length = 0;
 }
 
 // ─── MutationObserver helpers ────────────────────────────────────────────────
@@ -119,8 +126,16 @@ export function stopObserver(): void {
 // ─── Caption processing ──────────────────────────────────────────────────────
 
 async function processCaption(settings: ExtensionSettings): Promise<void> {
-  const allTexts = detectAllCaptions(settings.sourceLanguage);
-  if (allTexts.length === 0) return;
+  const rawTexts = detectAllCaptions(settings.sourceLanguage);
+  if (rawTexts.length === 0) return;
+
+  // Normalize all texts: collapse whitespace to a single space (reduces near-duplicate
+  // cache keys that differ only by whitespace). Additionally apply NFKC for Japanese.
+  const normalizeWs = (t: string): string => t.trim().replace(/\s+/g, ' ');
+  const allTexts =
+    settings.sourceLanguage === 'Japanese'
+      ? rawTexts.map(t => normalizeJapanese(normalizeWs(t)))
+      : rawTexts.map(normalizeWs);
 
   // Replay cached sentences not yet shown (after restart / page reload)
   for (const t of allTexts) {
@@ -133,9 +148,13 @@ async function processCaption(settings: ExtensionSettings): Promise<void> {
     }
   }
 
-  // Sentences that need translation and are not already in-flight
+  // Skip mid-sentence fragments; only translate likely-complete sentences.
   const unseen = allTexts.filter(
-    t => t.length >= MIN_TEXT_LENGTH && !translationCache.has(t) && !inFlightTexts.has(t),
+    t =>
+      t.length >= MIN_TEXT_LENGTH &&
+      isLikelyComplete(t, settings.sourceLanguage) &&
+      !translationCache.has(t) &&
+      !inFlightTexts.has(t),
   );
   if (unseen.length === 0) return;
 
@@ -174,6 +193,8 @@ async function translateGoogleOne(text: string, settings: ExtensionSettings): Pr
       displayedTexts.add(text);
       showOverlay(text, translation);
       showStatus('');
+      if (recentContext.length >= MAX_CONTEXT) recentContext.shift();
+      recentContext.push({ src: text, tgt: translation });
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') return;
@@ -197,6 +218,7 @@ async function translateOpenAIOne(
         model: settings.model,
         sourceLanguage: settings.sourceLanguage,
         targetLanguage: settings.targetLanguage,
+        context: [...recentContext],
       },
       (partial) => showOverlay(text, partial),
       signal,
@@ -206,6 +228,8 @@ async function translateOpenAIOne(
       displayedTexts.add(text);
       showOverlay(text, translation);
       showStatus('');
+      if (recentContext.length >= MAX_CONTEXT) recentContext.shift();
+      recentContext.push({ src: text, tgt: translation });
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') return;

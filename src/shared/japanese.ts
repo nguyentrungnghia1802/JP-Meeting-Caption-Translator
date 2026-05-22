@@ -22,7 +22,11 @@ export function containsJapanese(text: string): boolean {
 export function isJapaneseComplete(text: string): boolean {
   const t = text.trim();
   if (/[。！？!?]$/.test(t)) return true;
-  if (/(?:ます|です|した|でした|ました|ません|ましたか|ですか|ますか|ましょう|ましょうか|ますね|ですね|ですよ|ますよ|でしょう|てください|ておきます|ています|ていません|てみます|なります|になります|ておりません|ております)$/.test(t)) return true;
+  // Polite verb endings (desu/masu family)
+  if (/(?:ます|です|した|でした|ました|ません|ましたか|ですか|ますか)$/.test(t)) return true;
+  // Extended polite / volitional / request forms
+  if (/(?:ましょう|ましょうか|ますね|ですね|ですよ|ますよ|でしょう|てください|ておきます|ています|ていません|てみます|なります|になります|ておりません|ております)$/.test(t)) return true;
+  // Sentence-final particles and casual endings
   if (/(?:だね|だよ|だな|かな|よね|かね|わね|のね|のよ|だろう|じゃない|じゃなくて)$/.test(t) && t.length >= 4) return true;
   // Long-enough Japanese text is almost certainly a complete clause
   return containsJapanese(t) && t.length >= 20;
@@ -41,14 +45,15 @@ export function isEnglishComplete(text: string): boolean {
 
 /**
  * Dispatcher: returns whether a caption in the given source language looks complete.
- * Chinese/Korean/Vietnamese captions are always passed through (no gate needed –
- * their typical caption behaviour already produces full sentences).
+ * Vietnamese uses the same Latin-script heuristic as English (ends with .!? or ≥3 words).
+ * Other languages (Chinese, Korean) are always passed through.
  */
 export function isLikelyComplete(text: string, language: string): boolean {
   switch (language) {
-    case 'Japanese': return isJapaneseComplete(text);
-    case 'English':  return isEnglishComplete(text);
-    default:         return true;
+    case 'Japanese':   return isJapaneseComplete(text);
+    case 'English':
+    case 'Vietnamese': return isEnglishComplete(text);
+    default:           return true;
   }
 }
 
@@ -68,7 +73,7 @@ const MIN_CAPTION_LENGTH = 3;
 const MIN_LATIN_CAPTION_LENGTH = 5;
 
 // UI labels to ignore (Google Meet)
-const UI_NOISE = [
+const UI_NOISE = new Set([
   'you',
   'captions',
   'microphone',
@@ -86,14 +91,14 @@ const UI_NOISE = [
   'pin',
   'mute',
   'unmute',
-];
+]);
 
 /** Validator for Japanese / Chinese / Korean source (requires CJK chars) */
 export function isValidCaption(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length < MIN_CAPTION_LENGTH) return false;
   const lower = trimmed.toLowerCase();
-  if (UI_NOISE.some((n) => lower === n)) return false;
+  if (UI_NOISE.has(lower)) return false;
   return JAPANESE_REGEX.test(trimmed);
 }
 
@@ -102,7 +107,7 @@ function isValidEnglishCaption(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length < MIN_LATIN_CAPTION_LENGTH) return false;
   const lower = trimmed.toLowerCase();
-  if (UI_NOISE.some((n) => lower === n)) return false;
+  if (UI_NOISE.has(lower)) return false;
   // Must contain at least one Latin letter
   return /[a-zA-Z]/.test(trimmed);
 }
@@ -112,7 +117,7 @@ function isValidVietnameseCaption(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length < MIN_LATIN_CAPTION_LENGTH) return false;
   const lower = trimmed.toLowerCase();
-  if (UI_NOISE.some((n) => lower === n)) return false;
+  if (UI_NOISE.has(lower)) return false;
   // Vietnamese uses Latin + diacritics
   return /[a-zA-Z]/.test(trimmed) || VIETNAMESE_REGEX.test(trimmed);
 }
