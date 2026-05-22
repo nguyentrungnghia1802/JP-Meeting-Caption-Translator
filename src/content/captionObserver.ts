@@ -1,6 +1,6 @@
 import { detectAllCaptions } from './captionDetector';
 import { showOverlay, showError, showStatus } from './overlay';
-import { translateTextStream, translateWithGoogle } from '../shared/translator';
+import { translateTextStream } from '../shared/translator';
 import type { TranslationContext } from '../shared/translator';
 import type { ExtensionSettings } from '../shared/storage';
 import { isLikelyComplete, normalizeJapanese } from '../shared/japanese';
@@ -214,9 +214,36 @@ async function processCaption(settings: ExtensionSettings): Promise<void> {
 
 // ─── Per-provider helpers ────────────────────────────────────────────────────
 
+/**
+ * Proxy Google Translate through the background service worker.
+ * Content scripts on Google Meet are blocked by the page's CSP from fetching
+ * translate.googleapis.com directly.  The service worker runs in the extension
+ * context (CSP-exempt) so routing through it fixes the "Failed to fetch" error.
+ */
+function translateViaBackground(
+  text: string,
+  sourceLanguage: string,
+  targetLanguage: string,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { type: 'TRANSLATE_GOOGLE', text, sourceLanguage, targetLanguage },
+      (response: { ok: boolean; result?: string; error?: string } | undefined) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else if (response?.ok && response.result !== undefined) {
+          resolve(response.result);
+        } else {
+          reject(new Error(response?.error ?? 'Translation proxy error'));
+        }
+      },
+    );
+  });
+}
+
 async function translateGoogleOne(text: string, settings: ExtensionSettings): Promise<void> {
   try {
-    const translation = await translateWithGoogle(
+    const translation = await translateViaBackground(
       text,
       settings.sourceLanguage,
       settings.targetLanguage,
