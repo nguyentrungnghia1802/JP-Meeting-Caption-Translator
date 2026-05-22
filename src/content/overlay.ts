@@ -147,15 +147,26 @@ function showWindow(): void {
 
 /**
  * Append a new translation entry, or update the last entry if the original
- * text is the same (handles streaming token-by-token updates).
+ * text is the same (streaming) OR is an accumulation of the last original
+ * (Google Meet grows captions in a single text node: "alarm." → "alarm. alarm.").
  */
 export function showOverlay(original: string, translation: string): void {
   const w = ensureWindow();
   showWindow();
 
-  if (original === w.lastOriginal && w.lastTranslationEl) {
-    // Streaming update: replace translation text in place
+  const lastOrig = w.lastOriginal;
+  // Treat as an in-place update when:
+  //  • exact streaming match, OR
+  //  • the new text extends the last (accumulating caption), OR
+  //  • the last text extends the new (caption being corrected / shortened)
+  const isAccumulation =
+    lastOrig.length > 0 &&
+    (original.startsWith(lastOrig) || lastOrig.startsWith(original));
+
+  if ((original === lastOrig || isAccumulation) && w.lastTranslationEl) {
+    // Update existing entry in place
     w.lastTranslationEl.textContent = translation;
+    w.lastOriginal = original;
   } else {
     // New sentence: append a new entry
     const entry = document.createElement('div');
