@@ -1,7 +1,9 @@
 import { detectAllCaptions } from './captionDetector';
 import { showOverlay, showError, showStatus } from './overlay';
 import { translateTextStream, translateWithGoogle } from '../shared/translator';
+import type { TranslationContext } from '../shared/translator';
 import type { ExtensionSettings } from '../shared/storage';
+import { isLikelyComplete, normalizeJapanese } from '../shared/japanese';
 
 // Poll interval: check every 1.5 s. Google Translate is fast (~150 ms) so
 // rate-limit is not a concern. 1.5 s lets us keep up with ~40 sentences/min.
@@ -20,6 +22,11 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastProcessedText = '';
 let inflightController: AbortController | null = null;
 
+// Rolling context of the last MAX_CONTEXT source→target pairs.
+// Passed to OpenAI so it can maintain conversational coherence across sentences.
+const MAX_CONTEXT = 3;
+const recentContext: TranslationContext[] = [];
+
 // ─── LRU helpers ────────────────────────────────────────────────────────────
 
 function setCached(key: string, value: string): void {
@@ -34,6 +41,7 @@ export function clearTranslationCache(): void {
   translationCache.clear();
   displayedTexts.clear();
   lastProcessedText = '';
+  recentContext.length = 0;
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -62,16 +70,24 @@ export function stopObserver(): void {
   }
   lastProcessedText = '';
   displayedTexts.clear();
+  recentContext.length = 0;
 }
 
 // ─── Caption processing ──────────────────────────────────────────────────────
 
 async function processCaption(settings: ExtensionSettings): Promise<void> {
-  const allTexts = detectAllCaptions(settings.sourceLanguage);
-  if (allTexts.length === 0) {
+  const rawTexts = detectAllCaptions(settings.sourceLanguage);
+  if (rawTexts.length === 0) {
     console.debug('[JP-Translator] no caption detected');
     return;
   }
+
+  // Normalize Japanese text (half-width katakana → full-width, etc.).
+  // Other languages are passed through unchanged.
+  const allTexts =
+    settings.sourceLanguage === 'Japanese'
+      ? rawTexts.map(normalizeJapanese)
+      : rawTexts;
 
   // Show any cached sentences not yet displayed (catches up after page reload)
   for (const t of allTexts) {
@@ -84,8 +100,16 @@ async function processCaption(settings: ExtensionSettings): Promise<void> {
     }
   }
 
-  // Find oldest sentence not yet translated and not currently in-flight
-  const unseen = allTexts.filter(t => !translationCache.has(t) && t !== lastProcessedText);
+  // Find oldest sentence that:
+  //  • has not been translated yet
+  //  • is not the one currently in-flight
+  //  • looks like a complete sentence (avoids wasting calls on mid-sentence fragments)
+  const unseen = allTexts.filter(
+    t =>
+      !translationCache.has(t) &&
+      t !== lastProcessedText &&
+      isLikelyComplete(t, settings.sourceLanguage),
+  );
   if (unseen.length === 0) return;
 
   // Process one at a time (oldest first = chronological order)
@@ -115,9 +139,11 @@ async function processCaption(settings: ExtensionSettings): Promise<void> {
         setCached(text, translation);
         displayedTexts.add(text);
         showOverlay(text, translation);
+        if (recentContext.length >= MAX_CONTEXT) recentContext.shift();
+        recentContext.push({ src: text, tgt: translation });
       }
     } else {
-      // OpenAI streaming
+      // OpenAI streaming: pass recent context for conversational coherence
       translation = await translateTextStream(
         {
           text,
@@ -125,6 +151,7 @@ async function processCaption(settings: ExtensionSettings): Promise<void> {
           model: settings.model,
           sourceLanguage: settings.sourceLanguage,
           targetLanguage: settings.targetLanguage,
+          context: [...recentContext],
         },
         (partial) => showOverlay(text, partial),
         signal,
@@ -133,6 +160,8 @@ async function processCaption(settings: ExtensionSettings): Promise<void> {
         setCached(text, translation);
         displayedTexts.add(text);
         showOverlay(text, translation);
+        if (recentContext.length >= MAX_CONTEXT) recentContext.shift();
+        recentContext.push({ src: text, tgt: translation });
       }
     }
   } catch (err) {
