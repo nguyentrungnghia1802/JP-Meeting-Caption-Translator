@@ -11,12 +11,19 @@ const LANG_CODES: Record<string, string> = {
   Korean: 'ko',
 };
 
+export interface TranslationContext {
+  src: string;
+  tgt: string;
+}
+
 export interface TranslateParams {
   text: string;
   apiKey: string;
   model: string;
   sourceLanguage: string;
   targetLanguage: string;
+  /** Last N translated pairs — gives OpenAI conversational coherence. */
+  context?: ReadonlyArray<TranslationContext>;
 }
 
 /**
@@ -43,9 +50,60 @@ export async function translateWithGoogle(
 }
 
 
-// Pre-build the system prompt once per call to avoid repeated string interpolation
+/**
+ * Language-aware system prompt.
+ * Japanese gets a prompt tuned for keigo and business vocabulary;
+ * English gets a concise interpreter prompt;
+ * other languages fall back to a generic prompt.
+ */
 function buildSystemPrompt(src: string, tgt: string): string {
-  return `Translate the following ${src} meeting caption into natural ${tgt}. Keep the meaning concise and clear. Do not add explanations. Return only the ${tgt} translation.`;
+  if (src === 'Japanese') {
+    return (
+      `You are a real-time interpreter for a Japanese business meeting. ` +
+      `Translate each Japanese caption into natural ${tgt}. ` +
+      `Render keigo (formal/polite speech) as natural formal expressions in ${tgt}. ` +
+      `Preserve technical and business terms accurately. ` +
+      `Output only the translation — no explanations, no notes.`
+    );
+  }
+  if (src === 'English') {
+    return (
+      `You are a real-time meeting interpreter. ` +
+      `Translate each English caption into natural spoken ${tgt}. ` +
+      `Be concise and conversational. ` +
+      `Output only the translation — no explanations.`
+    );
+  }
+  return (
+    `Translate the following ${src} meeting caption into natural ${tgt}. ` +
+    `Keep the meaning concise and clear. Output only the ${tgt} translation.`
+  );
+}
+
+/**
+ * Build the messages array for the OpenAI chat API.
+ * When recent context is available, it is prepended as a single user message
+ * (no extra round-trips) so the model can maintain conversational coherence.
+ */
+function buildMessages(
+  text: string,
+  src: string,
+  tgt: string,
+  context: ReadonlyArray<TranslationContext>,
+): Array<{ role: string; content: string }> {
+  const messages: Array<{ role: string; content: string }> = [
+    { role: 'system', content: buildSystemPrompt(src, tgt) },
+  ];
+  if (context.length > 0) {
+    const ctx = context.map((c) => `• ${c.src} → ${c.tgt}`).join('\n');
+    messages.push({
+      role: 'user',
+      content: `Recent conversation context (for coherence only, do NOT translate):\n${ctx}\n\nNow translate:\n${text}`,
+    });
+  } else {
+    messages.push({ role: 'user', content: text });
+  }
+  return messages;
 }
 
 function handleHttpError(status: number, apiMessage: string): never {
@@ -66,7 +124,7 @@ export async function translateTextStream(
   onChunk: (partial: string) => void,
   signal?: AbortSignal,
 ): Promise<string> {
-  const { text, apiKey, model, sourceLanguage, targetLanguage } = params;
+  const { text, apiKey, model, sourceLanguage, targetLanguage, context } = params;
 
   if (!apiKey) throw new Error('API key is missing. Please configure it in Settings.');
 
@@ -80,10 +138,7 @@ export async function translateTextStream(
     body: JSON.stringify({
       model,
       stream: true,
-      messages: [
-        { role: 'system', content: buildSystemPrompt(sourceLanguage, targetLanguage) },
-        { role: 'user', content: text },
-      ],
+      messages: buildMessages(text, sourceLanguage, targetLanguage, context ?? []),
       max_tokens: 256,
       temperature: 0.3,
     }),

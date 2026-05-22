@@ -7,6 +7,62 @@ export function containsJapanese(text: string): boolean {
   return JAPANESE_REGEX.test(text);
 }
 
+// ─── Sentence completeness detection ────────────────────────────────────────
+
+/**
+ * Returns true when a Japanese caption appears to be sentence-final.
+ * Avoids sending mid-sentence fragments to the translation API.
+ *
+ * Heuristics (in order of reliability):
+ *  1. Ends with full-stop punctuation (。！？!?)
+ *  2. Ends with a polite verb form (です、ます、した …)
+ *  3. Ends with a sentence-final particle (ね、よ、な …)
+ *  4. Long enough (≥ 20 chars) to be a complete thought regardless
+ */
+export function isJapaneseComplete(text: string): boolean {
+  const t = text.trim();
+  if (/[。！？!?]$/.test(t)) return true;
+  if (/(?:ます|です|した|でした|ました|ません|ましたか|ですか|ますか|ましょう|ましょうか|ますね|ですね|ですよ|ますよ|でしょう|てください|ておきます|ています|ていません|てみます|なります|になります|ておりません|ております)$/.test(t)) return true;
+  if (/(?:だね|だよ|だな|かな|よね|かね|わね|のね|のよ|だろう|じゃない|じゃなくて)$/.test(t) && t.length >= 4) return true;
+  // Long-enough Japanese text is almost certainly a complete clause
+  return containsJapanese(t) && t.length >= 20;
+}
+
+/**
+ * Returns true when an English caption appears to be sentence-final.
+ * Accepts punctuation-terminated sentences and unpunctuated utterances
+ * of at least 3 words (typical for meeting speech like "Thank you" / "Sounds good").
+ */
+export function isEnglishComplete(text: string): boolean {
+  const t = text.trim();
+  if (/[.!?]$/.test(t)) return true;
+  return t.split(/\s+/).filter(Boolean).length >= 3;
+}
+
+/**
+ * Dispatcher: returns whether a caption in the given source language looks complete.
+ * Chinese/Korean/Vietnamese captions are always passed through (no gate needed –
+ * their typical caption behaviour already produces full sentences).
+ */
+export function isLikelyComplete(text: string, language: string): boolean {
+  switch (language) {
+    case 'Japanese': return isJapaneseComplete(text);
+    case 'English':  return isEnglishComplete(text);
+    default:         return true;
+  }
+}
+
+/**
+ * Normalize Japanese text before translation:
+ *   - half-width katakana → full-width  (ｱ → ア)
+ *   - full-width ASCII    → half-width  (ａ → a)
+ *   - other NFKC compatibility mappings
+ * Improves Google Translate / OpenAI accuracy with no information loss.
+ */
+export function normalizeJapanese(text: string): string {
+  return text.normalize('NFKC');
+}
+
 // Minimum meaningful caption length
 const MIN_CAPTION_LENGTH = 3;
 const MIN_LATIN_CAPTION_LENGTH = 5;
