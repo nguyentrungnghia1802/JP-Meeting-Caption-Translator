@@ -21,7 +21,7 @@ export interface TranslateParams {
 
 /**
  * Translates text using the free, unofficial Google Translate endpoint.
- * No API key required. Returns the translated string.
+ * No API key required.  Retries once on transient network errors.
  */
 export async function translateWithGoogle(
   text: string,
@@ -33,13 +33,27 @@ export async function translateWithGoogle(
   const tl = LANG_CODES[targetLanguage] ?? 'vi';
   const url = `${GOOGLE_ENDPOINT}?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`;
 
-  const res = await fetch(url, { signal });
-  if (!res.ok) throw new Error(`Google Translate error: HTTP ${res.status}`);
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url, { signal });
+      if (!res.ok) throw new Error(`Google Translate error: HTTP ${res.status}`);
 
-  // Response: [[["translated","original",null,null,1],...],null,"ja"]
-  const data = await res.json() as Array<unknown>;
-  const segments = data[0] as Array<[string, ...unknown[]]>;
-  return segments.map((s) => s[0]).join('').trim();
+      // Response: [[["translated","original",null,null,1],...],null,"ja"]
+      const data = await res.json() as Array<unknown>;
+      const segments = data[0] as Array<[string, ...unknown[]]>;
+      return segments.map((s) => s[0]).join('').trim();
+    } catch (err) {
+      // Never retry on user-initiated abort or HTTP errors (no point retrying 4xx/5xx)
+      if (err instanceof Error && (err.name === 'AbortError' || /HTTP \d{3}/.test(err.message))) {
+        throw err;
+      }
+      lastErr = err;
+      // Brief pause before retry to let transient network issue clear
+      await new Promise<void>(resolve => { setTimeout(resolve, 400); });
+    }
+  }
+  throw lastErr;
 }
 
 
