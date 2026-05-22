@@ -24,6 +24,11 @@ const PARALLEL_MAX = 3;
 // incomplete or noise (single punctuation, partial kana, etc.)
 const MIN_TEXT_LENGTH = 4;
 
+// When a caption is still growing (streaming), only re-translate once it has
+// gained at least this many characters since the last translation.
+// This limits retranslations of an in-progress sentence to ~2-3 times.
+const GROWTH_THRESHOLD = 15;
+
 // Translation cache persists across Stop/Start to avoid re-translating
 // the same sentences when the user briefly toggles the extension.
 const translationCache = new Map<string, string>();
@@ -31,6 +36,10 @@ const translationCache = new Map<string, string>();
 const displayedTexts = new Set<string>();
 // Texts currently being fetched – prevents launching duplicate requests
 const inFlightTexts = new Set<string>();
+
+// Source text of the most recently dispatched translation.
+// Used to throttle retranslations of the same slowly-growing caption.
+let lastTranslatedSource = '';
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let mutationObserver: MutationObserver | null = null;
@@ -58,6 +67,7 @@ export function clearTranslationCache(): void {
   displayedTexts.clear();
   inFlightTexts.clear();
   recentContext.length = 0;
+  lastTranslatedSource = '';
 }
 
 // ─── MutationObserver helpers ────────────────────────────────────────────────
@@ -121,9 +131,20 @@ export function stopObserver(): void {
   inFlightTexts.clear();
   displayedTexts.clear();
   recentContext.length = 0;
+  lastTranslatedSource = '';
 }
 
 // ─── Caption processing ──────────────────────────────────────────────────────
+
+/**
+ * Returns true if the text ends with sentence-final punctuation.
+ * Sentence-final texts bypass the growth throttle so we always capture
+ * the completed sentence even if it hasn't grown by GROWTH_THRESHOLD.
+ */
+function isSentenceFinal(text: string, language: string): boolean {
+  const t = text.trim();
+  return language === 'Japanese' ? /[。！？!?]$/.test(t) : /[.!?]$/.test(t);
+}
 
 async function processCaption(settings: ExtensionSettings): Promise<void> {
   const rawTexts = detectAllCaptions(settings.sourceLanguage);
@@ -149,13 +170,25 @@ async function processCaption(settings: ExtensionSettings): Promise<void> {
   }
 
   // Skip mid-sentence fragments; only translate likely-complete sentences.
-  const unseen = allTexts.filter(
-    t =>
-      t.length >= MIN_TEXT_LENGTH &&
-      isLikelyComplete(t, settings.sourceLanguage) &&
-      !translationCache.has(t) &&
-      !inFlightTexts.has(t),
-  );
+  // Additionally throttle retranslations of a still-growing caption:
+  // if the new text is just a small extension of what we last translated,
+  // wait until it has grown by GROWTH_THRESHOLD chars (unless sentence-final).
+  const lang = settings.sourceLanguage;
+  const unseen = allTexts.filter(t => {
+    if (t.length < MIN_TEXT_LENGTH) return false;
+    if (!isLikelyComplete(t, lang)) return false;
+    if (translationCache.has(t)) return false;
+    if (inFlightTexts.has(t)) return false;
+    // Growth throttle: skip if this is a tiny extension of the last translation
+    if (
+      lastTranslatedSource.length > 0 &&
+      t.startsWith(lastTranslatedSource) &&
+      !isSentenceFinal(t, lang)
+    ) {
+      return t.length - lastTranslatedSource.length >= GROWTH_THRESHOLD;
+    }
+    return true;
+  });
   if (unseen.length === 0) return;
 
   if (settings.provider === 'google') {
@@ -193,6 +226,7 @@ async function translateGoogleOne(text: string, settings: ExtensionSettings): Pr
       displayedTexts.add(text);
       showOverlay(text, translation);
       showStatus('');
+      lastTranslatedSource = text;
       if (recentContext.length >= MAX_CONTEXT) recentContext.shift();
       recentContext.push({ src: text, tgt: translation });
     }
@@ -228,6 +262,7 @@ async function translateOpenAIOne(
       displayedTexts.add(text);
       showOverlay(text, translation);
       showStatus('');
+      lastTranslatedSource = text;
       if (recentContext.length >= MAX_CONTEXT) recentContext.shift();
       recentContext.push({ src: text, tgt: translation });
     }
