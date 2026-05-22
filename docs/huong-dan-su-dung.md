@@ -56,4 +56,4 @@ npm run build
 - Vào `chrome://extensions`, tìm JP Meeting Caption Translator, nhấn **Remove**
 
 ---
-Mọi thắc mắc/câu hỏi vui lòng liên hệ tác giả hoặc tạo issue trên GitHub repo của dự án.
+Mọi thắc mắc/câu hỏi vui lòng liên hệ **[tác giả](https://nguyentrungnghia1802.github.io/Profile/)** hoặc tạo issue trên GitHub repo của dự án.
