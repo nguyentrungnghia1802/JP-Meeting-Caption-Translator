@@ -10,7 +10,7 @@ export default function Popup() {
 
   useEffect(() => {
     getSettings().then((s) => {
-      if (!s.apiKey) {
+      if (s.provider !== 'google' && !s.apiKey) {
         setStatus('no_api_key');
       } else {
         setStatus(s.isEnabled ? 'running' : 'stopped');
