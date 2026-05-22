@@ -7,17 +7,20 @@
 
 ## 2. Cài đặt extension
 
-### Bước 1: Tải mã nguồn & cài dependencies
+### Cách 1: ải file zip đã build sẵn
+1. Tải file `dist.zip` từ [releases](https://drive.google.com/drive/u/0/folders/1eCFH7XPze6kHdHZKBwDxWCQ65ktZvCWQ)
+
+#### Bước 1: Tải mã nguồn & cài dependencies
 ```bash
 npm install
 ```
 
-### Bước 2: Build extension
+#### Bước 2: Build extension
 ```bash
 npm run build
 ```
 
-### Bước 3: Nạp extension vào Chrome
+#### Bước 3: Nạp extension vào Chrome
 1. Mở Chrome, truy cập `chrome://extensions`
 2. Bật **Developer mode** (Chế độ nhà phát triển) ở góc phải trên
 3. Nhấn **Load unpacked** (Tải tiện ích chưa đóng gói)
