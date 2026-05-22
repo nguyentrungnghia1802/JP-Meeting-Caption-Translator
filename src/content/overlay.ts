@@ -26,12 +26,16 @@ function buildWindow(): OverlayWindow {
     right: 20px;
     z-index: 2147483647;
     width: 420px;
-    max-width: calc(100vw - 40px);
+    height: 380px;
+    min-width: 280px;
+    min-height: 160px;
+    resize: both;
     background: rgba(15, 15, 20, 0.93);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 12px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.7);
     font-family: 'Segoe UI', 'Noto Sans JP', 'Hiragino Sans', sans-serif;
+    font-size: 14px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -53,14 +57,14 @@ function buildWindow(): OverlayWindow {
   `;
   const title = document.createElement('span');
   title.textContent = '🇯🇵 JP Translator';
-  title.style.cssText = `font-size: 12px; color: rgba(255,255,255,0.6); font-weight: 600; letter-spacing: 0.5px;`;
+  title.style.cssText = `font-size: 0.857em; color: rgba(255,255,255,0.6); font-weight: 600; letter-spacing: 0.5px;`;
 
   const clearBtn = document.createElement('button');
   clearBtn.textContent = '🗑';
   clearBtn.title = 'Clear history';
   clearBtn.style.cssText = `
     background: none; border: none; color: rgba(255,255,255,0.4);
-    cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 4px;
+    cursor: pointer; font-size: 0.929em; padding: 2px 6px; border-radius: 4px;
     transition: color 0.15s;
   `;
   clearBtn.onmouseenter = () => { clearBtn.style.color = '#fff'; };
@@ -75,8 +79,7 @@ function buildWindow(): OverlayWindow {
   body.style.cssText = `
     flex: 1;
     overflow-y: auto;
-    max-height: 320px;
-    min-height: 80px;
+    min-height: 0;
     padding: 10px 14px;
     display: flex;
     flex-direction: column;
@@ -89,7 +92,7 @@ function buildWindow(): OverlayWindow {
   const statusBar = document.createElement('div');
   statusBar.style.cssText = `
     padding: 5px 14px 7px;
-    font-size: 11px;
+    font-size: 0.786em;
     color: rgba(255,255,255,0.45);
     border-top: 1px solid rgba(255,255,255,0.07);
     min-height: 22px;
@@ -127,6 +130,14 @@ function buildWindow(): OverlayWindow {
     dragging = false;
     header.style.cursor = 'grab';
   });
+
+  // ── Font scaling on resize ───────────────────────────────────────────────
+  // Scale the container's base font-size proportionally to its width so all
+  // em-based children (title, captions, status) grow/shrink together.
+  new ResizeObserver(() => {
+    const sz = Math.max(10, Math.round(container.offsetWidth / 30));
+    container.style.fontSize = sz + 'px';
+  }).observe(container);
 
   win = { container, body, statusBar, lastOriginal: '', lastTranslationEl: null };
   return win;
@@ -177,11 +188,11 @@ export function showOverlay(original: string, translation: string): void {
 
     const origEl = document.createElement('div');
     origEl.textContent = original;
-    origEl.style.cssText = `font-size: 12px; color: rgba(255,255,255,0.5); margin-bottom: 3px; word-break: break-word;`;
+    origEl.style.cssText = `font-size: 0.857em; color: rgba(255,255,255,0.5); margin-bottom: 3px; word-break: break-word;`;
 
     const transEl = document.createElement('div');
     transEl.textContent = translation;
-    transEl.style.cssText = `font-size: 16px; color: #ffffff; font-weight: 600; line-height: 1.5; word-break: break-word;`;
+    transEl.style.cssText = `font-size: 1.143em; color: #ffffff; font-weight: 600; line-height: 1.5; word-break: break-word;`;
 
     entry.appendChild(origEl);
     entry.appendChild(transEl);
